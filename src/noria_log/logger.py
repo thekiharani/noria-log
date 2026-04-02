@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import traceback
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -87,8 +88,20 @@ class ServiceLogger:
     def fatal(self, message: str, **fields: Any) -> None:
         self.log("fatal", message, **fields)
 
-    def exception(self, message: str, error: BaseException, **fields: Any) -> None:
-        self.log("error", message, err=error, **fields)
+    def exception(
+        self,
+        message: str,
+        error: BaseException,
+        *,
+        exc_info: bool = True,
+        **fields: Any,
+    ) -> None:
+        err_fields: dict[str, Any] = {"err": error}
+        if exc_info and error.__traceback__ is not None:
+            err_fields["stack"] = "".join(
+                traceback.format_exception(type(error), error, error.__traceback__)
+            )
+        self.log("error", message, **err_fields, **fields)
 
     def _build_record(
         self, level: str, message: str, fields: dict[str, Any]
