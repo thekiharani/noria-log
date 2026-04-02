@@ -95,15 +95,20 @@ jobs:
           path = Path("pyproject.toml")
           content = path.read_text()
           version = "${{ steps.bump.outputs.version }}"
-          updated = re.sub(
-              r'(?m)^version = ".*"$',
-              f'version = "{version}"',
-              content,
-              count=1,
-          )
-          if updated == content:
-              raise SystemExit("Unable to update version in pyproject.toml")
-          path.write_text(updated)
+          match = re.search(r'(?m)^version = "(.*)"$', content)
+          if match is None:
+              raise SystemExit("Unable to find version in pyproject.toml")
+          current = match.group(1)
+          if current == version:
+              print(f"pyproject.toml already has version {version}")
+          else:
+              updated = re.sub(
+                  r'(?m)^version = ".*"$',
+                  f'version = "{version}"',
+                  content,
+                  count=1,
+              )
+              path.write_text(updated)
           PY
 
       - name: Commit version bump and push tag
