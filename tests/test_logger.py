@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from botocore.exceptions import ClientError
 
+from noria_log import cloudwatch as cloudwatch_module
 from noria_log import (
     create_cloudwatch_destination,
     create_file_destination,
@@ -21,10 +22,8 @@ from noria_log import (
     resolve_target,
     sanitize_log_value,
 )
-from noria_log import cloudwatch as cloudwatch_module
 from noria_log import file as file_module
 from noria_log import logger as logger_module
-from noria_log import redaction as redaction_module
 from noria_log.cloudwatch import CloudWatchDestination, QueuedLogEvent
 from noria_log.logger import StdDestination
 from noria_log.targets import create_logger_target_context
@@ -220,7 +219,9 @@ def test_create_service_logger_supports_schema_remapping_identity_overrides_and_
     assert second["error"]["message"] == "boom"
 
 
-def test_create_service_logger_supports_base_fields_error_aliases_and_epoch_time_mode(tmp_path: Path):
+def test_create_service_logger_supports_base_fields_error_aliases_and_epoch_time_mode(
+    tmp_path: Path,
+):
     file_path = tmp_path / "base.log"
     bundle = create_service_logger(
         service_name="test-service",
@@ -365,7 +366,9 @@ def test_file_destination_supports_custom_resolvers_and_invalid_targets(tmp_path
         broken.emit_line('{"time":1,"msg":"boom"}')
 
 
-def test_file_destination_skips_blank_lines_and_falls_back_to_timestamp_sources(tmp_path: Path, monkeypatch):
+def test_file_destination_skips_blank_lines_and_falls_back_to_timestamp_sources(
+    tmp_path: Path, monkeypatch
+):
     destination = create_file_destination(
         {"target": {"value": str(tmp_path / "fallback.log")}},
         TEST_RUNTIME,
