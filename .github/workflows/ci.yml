@@ -41,8 +41,18 @@ jobs:
       - name: Build package
         run: uv build
 
-  tag:
+  verify:
     needs: test
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+
+    steps:
+      - name: Required checks passed
+        run: echo "All required CI checks passed."
+
+  tag:
+    needs: verify
     if: github.ref == 'refs/heads/release'
     runs-on: ubuntu-24.04
     permissions:
