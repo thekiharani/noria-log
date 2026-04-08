@@ -1,6 +1,6 @@
 [project]
 name = "noria-log"
-version = "0.1.1"
+version = "0.1.2"
 description = "Structured JSON logging for Python services with stdout, stderr, file, and CloudWatch destinations."
 readme = "README.md"
 requires-python = ">=3.11"
