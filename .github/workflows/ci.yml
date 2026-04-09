@@ -58,84 +58,86 @@ jobs:
     permissions:
       contents: write
     outputs:
-      tag_name: ${{ steps.bump.outputs.tag_name }}
-      version: ${{ steps.bump.outputs.version }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+      should_release: ${{ steps.release.outputs.should_release }}
 
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Determine version bump
-        id: bump
+      - name: Determine release version
+        id: release
         shell: bash
         run: |
           set -euo pipefail
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-          VERSION="${LATEST_TAG#v}"
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
-          COMMITS=$(git log "${LATEST_TAG}..HEAD" --pretty=format:"%s" 2>/dev/null || git log --pretty=format:"%s")
-
-          if echo "$COMMITS" | grep -qiE "^breaking[:(]|BREAKING CHANGE"; then
-            MAJOR=$((MAJOR + 1))
-            MINOR=0
-            PATCH=0
-          elif echo "$COMMITS" | grep -qiE "^feat[:(]"; then
-            MINOR=$((MINOR + 1))
-            PATCH=0
-          else
-            PATCH=$((PATCH + 1))
-          fi
-
-          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-          NEW_TAG="v${NEW_VERSION}"
-
-          echo "version=${NEW_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "tag_name=${NEW_TAG}" >> "$GITHUB_OUTPUT"
-
-      - name: Update pyproject version
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY'
+          BASE_VERSION=$(python - <<'PY'
           from pathlib import Path
           import re
 
-          path = Path("pyproject.toml")
-          content = path.read_text()
-          version = "${{ steps.bump.outputs.version }}"
+          content = Path("pyproject.toml").read_text()
           match = re.search(r'(?m)^version = "(.*)"$', content)
           if match is None:
               raise SystemExit("Unable to find version in pyproject.toml")
-          current = match.group(1)
-          if current == version:
-              print(f"pyproject.toml already has version {version}")
-          else:
-              updated = re.sub(
-                  r'(?m)^version = ".*"$',
-                  f'version = "{version}"',
-                  content,
-                  count=1,
-              )
-              path.write_text(updated)
+          print(match.group(1))
           PY
+          )
 
-      - name: Commit version bump and push tag
-        env:
-          TAG_NAME: ${{ steps.bump.outputs.tag_name }}
-        shell: bash
-        run: |
-          set -euo pipefail
+          IFS='.' read -r MAJOR MINOR BASE_PATCH <<< "${BASE_VERSION}"
+          LINE_TAG_PREFIX="v${MAJOR}.${MINOR}."
+          git fetch --force --tags origin
+          LATEST_LINE_TAG=$(git tag --merged HEAD -l "${LINE_TAG_PREFIX}*" --sort=-v:refname | head -n 1)
+
+          if [ -z "${LATEST_LINE_TAG}" ]; then
+            NEW_PATCH="${BASE_PATCH}"
+          else
+            LATEST_PATCH="${LATEST_LINE_TAG##*.}"
+            if [ "${BASE_PATCH}" -gt "${LATEST_PATCH}" ]; then
+              NEW_PATCH="${BASE_PATCH}"
+            else
+              NEW_PATCH="$((LATEST_PATCH + 1))"
+            fi
+          fi
+
+          VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
+          TAG_NAME="v${VERSION}"
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag_name=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+
+          if [ -n "${LATEST_LINE_TAG}" ]; then
+            CHANGED_FILES=$(git diff --name-only "${LATEST_LINE_TAG}..HEAD" -- . ':(exclude).github/**')
+            if [ -z "${CHANGED_FILES}" ]; then
+              echo "Only GitHub configuration changed since ${LATEST_LINE_TAG}; skipping package release."
+              echo "should_release=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          if git rev-parse -q --verify "refs/tags/${TAG_NAME}^{commit}" >/dev/null; then
+            TAG_SHA=$(git rev-list -n 1 "${TAG_NAME}")
+            HEAD_SHA=$(git rev-parse HEAD)
+
+            if [ "${TAG_SHA}" = "${HEAD_SHA}" ]; then
+              echo "Tag ${TAG_NAME} already points at HEAD."
+              echo "should_release=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            echo "Tag ${TAG_NAME} already exists on a different commit (${TAG_SHA}). Delete the stray tag or adjust the base version line in pyproject.toml."
+            exit 1
+          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml
-          git commit -m "chore(release): ${TAG_NAME}" || true
           git tag "${TAG_NAME}"
-          git push origin HEAD:release "${TAG_NAME}"
+          git push origin "${TAG_NAME}"
+          echo "should_release=true" >> "$GITHUB_OUTPUT"
 
   release:
     needs: tag
-    if: github.ref == 'refs/heads/release'
+    if: github.ref == 'refs/heads/release' && needs.tag.outputs.should_release == 'true'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -161,7 +163,7 @@ jobs:
 
   publish:
     needs: [tag, release]
-    if: github.ref == 'refs/heads/release'
+    if: github.ref == 'refs/heads/release' && needs.tag.outputs.should_release == 'true'
     runs-on: ubuntu-24.04
     environment: pypi
     permissions:
@@ -180,6 +182,27 @@ jobs:
           set -euo pipefail
           git fetch --force --tags origin
           git checkout "${TAG_NAME}"
+
+      - name: Update build version
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("pyproject.toml")
+          content = path.read_text()
+          version = "${{ needs.tag.outputs.version }}"
+          updated = re.sub(
+              r'(?m)^version = ".*"$',
+              f'version = "{version}"',
+              content,
+              count=1,
+          )
+          if updated != content:
+              path.write_text(updated)
+          PY
 
       - name: Setup Python
         uses: actions/setup-python@v6
